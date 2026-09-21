@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShrinkRay - catch shrinkflation in the act</title>
+<style>
+  :root { --bg:#131711; --panel:#1a2017; --line:#2e3a2a; --text:#f1f6ee; --dim:#a3b09a; --accent:#a8d46a; --good:#8be0a4; --warn:#ffcf7a; --bad:#ff8f7a; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:26px 14px 44px; }
+  h1 { font-size:30px; }
+  .sub { color:var(--dim); margin:6px 0 18px; font-size:14px; text-align:center; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 18px; width:min(620px, 94vw); margin-bottom:14px; }
+  .card h2 { font-size:15px; margin-bottom:10px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .grid3 { display:grid; grid-template-columns:2fr 1fr 1fr; gap:10px; }
+  input, select { background:#0e120c; border:1px solid var(--line); border-radius:8px; color:var(--text); padding:9px 12px; font-size:14px; width:100%; }
+  label { color:var(--dim); font-size:12px; display:block; margin-bottom:4px; }
+  button { background:var(--accent); color:#131711; border:none; border-radius:8px; padding:10px 18px; font-size:14px; font-weight:700; cursor:pointer; margin-top:10px; }
+  .pkg { border:1px solid var(--line); border-radius:10px; padding:10px; background:#0e120c; }
+  .pkg h3 { font-size:13px; color:var(--dim); margin-bottom:8px; }
+  #cmp-out { text-align:center; margin-top:14px; font-size:15px; line-height:1.7; }
+  #cmp-out .win { color:var(--good); font-weight:900; font-size:18px; }
+  .prod { background:#0e120c; border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-top:8px; }
+  .prod .top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .prod .nm { font-weight:700; }
+  .verdict { font-size:12px; font-weight:700; padding:3px 10px; border-radius:20px; white-space:nowrap; }
+  .v-shrinkflated { background:var(--bad); color:#131711; }
+  .v-pricier { background:var(--warn); color:#131711; }
+  .v-cheaper { background:var(--good); color:#131711; }
+  .v-stable, .v-tracking { background:#39434f; color:var(--text); }
+  .prod .meta { color:var(--dim); font-size:13px; margin-top:5px; }
+  .event { border-left:4px solid var(--warn); background:#141a11; border-radius:6px; padding:8px 10px; margin-top:6px; font-size:13px; line-height:1.5; }
+  .event.shrink, .event.shrink-plus { border-left-color:var(--bad); }
+  .event.value-up { border-left-color:var(--good); }
+  .addp { display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:8px; margin-top:8px; align-items:end; }
+  .addp button { margin-top:0; padding:9px 14px; }
+  .del { background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px; margin-top:6px; padding:0; }
+  .del:hover { color:var(--bad); }
+  .empty { color:var(--dim); text-align:center; padding:12px 0; font-size:14px; }
+  .foot { margin-top:14px; color:var(--dim); font-size:13px; }
+  a { color:var(--accent); text-decoration:none; }
+</style>
+</head>
+<body>
+<h1>ShrinkRay</h1>
+<div class="sub">same price, smaller package = a hidden price hike. point the ray at your groceries.</div>
+
+<div class="card">
+  <h2>Quick compare: which pack is actually cheaper?</h2>
+  <div class="grid">
+    <div class="pkg"><h3>Pack A</h3>
+      <label>Price ($)</label><input id="a-price" type="number" min="0" step="0.01" value="3.49">
+      <label style="margin-top:6px">Size (g / ml / count)</label><input id="a-size" type="number" min="0" step="any" value="500">
+    </div>
+    <div class="pkg"><h3>Pack B</h3>
+      <label>Price ($)</label><input id="b-price" type="number" min="0" step="0.01" value="6.49">
+      <label style="margin-top:6px">Size (g / ml / count)</label><input id="b-size" type="number" min="0" step="any" value="1000">
+    </div>
+  </div>
+  <div id="cmp-out"></div>
+</div>
+
+<div class="card">
+  <h2>Your watched products</h2>
+  <div class="grid3">
+    <div><label>Product name</label><input id="p-name" placeholder="e.g. Oaty O's cereal"></div>
+    <div><label>Unit</label>
+      <select id="p-unit"><option value="g">grams</option><option value="ml">ml</option><option value="count">count</option></select>
+    </div>
+    <div style="align-self:end"><button id="add-prod" style="margin-top:0;width:100%">Watch it</button></div>
+  </div>
+  <div id="products"><div class="empty">Nothing watched yet. Add the cereal you suspect is shrinking.</div></div>
+</div>
+
+<div class="foot"><a href="index.html">&larr; about</a></div>
+
+<script src="engine.js?v=1"></script>
+<script>
+(function () {
+  var KEY = 'shrinkray-v1';
+  var state = { products: [] }; // {id,name,unit,history:[{date,price,size}]}
+
+  function todayStr() {
+    var n = new Date();
+    return n.getFullYear() + '-' + String(n.getMonth()+1).padStart(2,'0') + '-' + String(n.getDate()).padStart(2,'0');
+  }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+  function load() { try { var s = JSON.parse(localStorage.getItem(KEY)); if (s && Array.isArray(s.products)) state = s; } catch (e) {} }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  // quick compare
+  function runCompare() {
+    var pa = parseFloat(document.getElementById('a-price').value);
+    var sa = parseFloat(document.getElementById('a-size').value);
+    var pb = parseFloat(document.getElementById('b-price').value);
+    var sb = parseFloat(document.getElementById('b-size').value);
+    var out = document.getElementById('cmp-out');
+    if (!(pa > 0) || !(sa > 0) || !(pb > 0) || !(sb > 0)) { out.innerHTML = ''; return; }
+    var c = ShrinkRay.compare(pa, sa, pb, sb);
+    if (c.winner === 'tie') {
+      out.innerHTML = 'Dead tie - both cost <b>$' + c.unitA.toFixed(3) + '</b> per 100 units.';
+    } else {
+      var w = c.winner, uW = w === 'A' ? c.unitA : c.unitB, uL = w === 'A' ? c.unitB : c.unitA;
+      out.innerHTML = '<span class="win">Pack ' + w + ' wins</span><br>' +
+        '$' + uW.toFixed(3) + ' vs $' + uL.toFixed(3) + ' per 100 units - <b>' + c.diffPct + '% cheaper</b>.';
+    }
+  }
+  ['a-price','a-size','b-price','b-size'].forEach(function (id) {
+    document.getElementById(id).addEventListener('input', runCompare);
+  });
+
+  function eventText(e, unit) {
+    var size = Math.abs(e.sizePct) + '% ' + (e.sizePct < 0 ? 'smaller' : 'bigger');
+    var price = (e.pricePct > 0 ? '+' : '') + e.pricePct + '% price';
+    if (e.kind === 'shrink') return '<b>SHRINKFLATION:</b> package got ' + size + ' while price barely moved (' + price + '). Effective price per ' + unit + ' up <b>+' + e.unitPct + '%</b>.';
+    if (e.kind === 'shrink-plus') return '<b>DOUBLE DIP:</b> package ' + size + ' AND price up (' + price + '). Effective price per ' + unit + ' up <b>+' + e.unitPct + '%</b>.';
+    if (e.kind === 'price-up') return '<b>Price hike:</b> same package, ' + price + '. Per ' + unit + ': +' + e.unitPct + '%.';
+    return '<b>Good news:</b> package ' + size + ' (' + price + '). Per ' + unit + ' down ' + e.unitPct + '%.';
+  }
+
+  function verdictChip(v) {
+    var label = { shrinkflated: 'SHRINKFLATED', pricier: 'pricier', cheaper: 'better value', stable: 'stable', tracking: 'tracking' }[v];
+    return '<span class="verdict v-' + v + '">' + label + '</span>';
+  }
+
+  function render() {
+    var el = document.getElementById('products');
+    if (!state.products.length) {
+      el.innerHTML = '<div class="empty">Nothing watched yet. Add the cereal you suspect is shrinking.</div>';
+      return;
+    }
+    el.innerHTML = '';
+    state.products.forEach(function (p) {
+      var a = ShrinkRay.analyze(p.history);
+      var v = ShrinkRay.verdict(a);
+      var div = document.createElement('div');
+      div.className = 'prod';
+      var html = '<div class="top"><span class="nm">' + esc(p.name) + '</span>' + verdictChip(v) + '</div>';
+      if (a.lastUnit !== null) {
+        html += '<div class="meta">now $' + a.lastUnit.toFixed(3) + ' per 100 ' + p.unit +
+          (a.changePct !== null ? ' &middot; ' + (a.changePct > 0 ? '+' : '') + a.changePct + '% since first entry ($' + a.firstUnit.toFixed(3) + ')' : ' &middot; add another purchase to compare') + '</div>';
+      } else {
+        html += '<div class="meta">no purchases logged yet</div>';
+      }
+      a.events.slice().reverse().forEach(function (e) {
+        html += '<div class="event ' + e.kind + '">' + eventText(e, p.unit) + '</div>';
+      });
+      html += '<div class="addp">' +
+        '<div><label>Date</label><input type="date" data-f="date" value="' + todayStr() + '"></div>' +
+        '<div><label>Price ($)</label><input type="number" min="0" step="0.01" data-f="price" placeholder="3.49"></div>' +
+        '<div><label>Size (' + p.unit + ')</label><input type="number" min="0" step="any" data-f="size" placeholder="450"></div>' +
+        '<button data-add="' + p.id + '">Log</button></div>';
+      html += '<button class="del" data-del="' + p.id + '">stop watching</button>';
+      div.innerHTML = html;
+      el.appendChild(div);
+    });
+    el.querySelectorAll('[data-add]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var id = b.getAttribute('data-add');
+        var prod = state.products.filter(function (p) { return p.id === id; })[0];
+        var wrap = b.parentElement;
+        var date = wrap.querySelector('[data-f=date]').value;
+        var price = parseFloat(wrap.querySelector('[data-f=price]').value);
+        var size = parseFloat(wrap.querySelector('[data-f=size]').value);
+        if (!date || !(price > 0) || !(size > 0)) return;
+        prod.history.push({ date: date, price: Math.round(price * 100) / 100, size: size });
+        save(); render();
+      });
+    });
+    el.querySelectorAll('[data-del]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        state.products = state.products.filter(function (p) { return p.id !== b.getAttribute('data-del'); });
+        save(); render();
+      });
+    });
+  }
+
+  document.getElementById('add-prod').addEventListener('click', function () {
+    var name = document.getElementById('p-name').value.trim();
+    var unit = document.getElementById('p-unit').value;
+    if (!name) return;
+    state.products.push({ id: 'p' + Date.now(), name: name, unit: unit, history: [] });
+    document.getElementById('p-name').value = '';
+    save(); render();
+  });
+
+  // test hook
+  window.__sr = {
+    clear: function () { state = { products: [] }; save(); render(); },
+    addProduct: function (name, unit, history) {
+      state.products.push({ id: 'p' + Math.random(), name: name, unit: unit || 'g', history: history || [] });
+      save(); render();
+    },
+    setCompare: function (pa, sa, pb, sb) {
+      document.getElementById('a-price').value = pa; document.getElementById('a-size').value = sa;
+      document.getElementById('b-price').value = pb; document.getElementById('b-size').value = sb;
+      runCompare();
+    },
+    read: function () {
+      return {
+        compare: document.getElementById('cmp-out').textContent,
+        products: Array.prototype.map.call(document.querySelectorAll('#products .prod'), function (d) { return d.textContent; }),
+        verdicts: Array.prototype.map.call(document.querySelectorAll('#products .verdict'), function (d) { return d.textContent; })
+      };
+    }
+  };
+
+  load();
+  render();
+  runCompare();
+})();
+</script>
+</body>
+</html>
