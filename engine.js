@@ -51,8 +51,8 @@
   function verdict(analysis) {
     if (analysis.changePct === null) return 'tracking';
     if (analysis.events.some(function (e) { return e.kind === 'shrink' || e.kind === 'shrink-plus'; })) return 'shrinkflated';
-    if (analysis.changePct > 10) return 'pricier';
-    if (analysis.changePct < -10) return 'cheaper';
+    if (analysis.changePct >= 10) return 'pricier';
+    if (analysis.changePct <= -10) return 'cheaper';
     return 'stable';
   }
 
